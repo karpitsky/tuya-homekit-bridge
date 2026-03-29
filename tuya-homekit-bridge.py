@@ -18,12 +18,13 @@ from pyhap.const import CATEGORY_THERMOSTAT
 load_dotenv()
 
 TUYA_DEVICE_ID = os.environ["TUYA_DEVICE_ID"]
-TUYA_IP = os.environ["TUYA_IP"]
+TUYA_IP = os.getenv("TUYA_IP", "Auto")
 TUYA_LOCAL_KEY = os.environ["TUYA_LOCAL_KEY"]
 TUYA_VERSION = float(os.getenv("TUYA_VERSION", "3.3"))
 TEMP_DIVISOR = int(os.getenv("TEMP_DIVISOR", "2"))
 POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", "30"))
 PAIRING_CODE = os.getenv("PAIRING_CODE", "031-45-777").encode()
+BIND_IP = os.getenv("BIND_IP", "192.168.2.1")
 
 
 class DP(str, Enum):
@@ -58,6 +59,7 @@ class TuyaThermostat(Accessory):
         super().__init__(*args, **kwargs)
 
         self.device = tinytuya.Device(TUYA_DEVICE_ID, TUYA_IP, TUYA_LOCAL_KEY, version=TUYA_VERSION)
+        self.device.set_socketTimeout(5)
 
         serv = self.add_preload_service("Thermostat", chars=[
             "CurrentHeatingCoolingState", "TargetHeatingCoolingState",
@@ -68,7 +70,7 @@ class TuyaThermostat(Accessory):
         self.target_state = serv.configure_char(
             "TargetHeatingCoolingState", value=HKState.HEAT,
             setter_callback=self.set_target_state,
-            valid_values={HKState.OFF: "Off", HKState.HEAT: "Heat", HKState.AUTO: "Auto"},
+            valid_values={"Off": 0, "Heat": 1, "Auto": 3},
         )
         self.current_temp = serv.configure_char("CurrentTemperature", value=20.0)
         self.target_temp = serv.configure_char(
@@ -81,17 +83,19 @@ class TuyaThermostat(Accessory):
     def set_target_temp(self, value):
         log.info(f"Setting target temp: {value}C")
         try:
-            self.device.set_value(DP.TARGET_TEMP, round(value * TEMP_DIVISOR))
+            self.device.set_value(DP.TARGET_TEMP.value, round(value * TEMP_DIVISOR))
         except Exception as e:
             log.error(f"Failed to set temp: {e}")
 
     def set_target_state(self, value):
         log.info(f"Setting state: {value}")
         try:
-            dps = {DP.SWITCH: value != HKState.OFF}
-            if value in HK_TO_TUYA:
-                dps[DP.MODE] = HK_TO_TUYA[value].value
-            self.device.set_multiple_values(dps)
+            if value == HKState.OFF:
+                self.device.set_value(DP.SWITCH.value, False)
+            else:
+                self.device.set_value(DP.SWITCH.value, True)
+                if value in HK_TO_TUYA:
+                    self.device.set_value(DP.MODE.value, HK_TO_TUYA[value].value)
         except Exception as e:
             log.error(f"Failed to set state: {e}")
 
@@ -101,22 +105,25 @@ class TuyaThermostat(Accessory):
 
     def poll_status(self):
         try:
-            status = self.device.status()
-            if not status or "dps" not in status:
+            data = self.device.status()
+            if not data or "dps" not in data:
                 log.warning("No status from device")
                 return
 
-            dps = status["dps"]
+            dps = data["dps"]
             log.debug(f"DPS: {dps}")
 
-            if DP.CURRENT_TEMP in dps:
-                self._update(self.current_temp, float(dps[DP.CURRENT_TEMP]) / TEMP_DIVISOR)
+            if "3" in dps:
+                self._update(self.current_temp, float(dps["3"]) / TEMP_DIVISOR)
 
-            if DP.TARGET_TEMP in dps:
-                self._update(self.target_temp, float(dps[DP.TARGET_TEMP]) / TEMP_DIVISOR)
+            if "2" in dps:
+                self._update(self.target_temp, float(dps["2"]) / TEMP_DIVISOR)
 
-            is_on = dps.get(DP.SWITCH, False)
-            hk_mode = TUYA_TO_HK.get(dps.get(DP.MODE), HKState.HEAT) if is_on else HKState.OFF
+            if "1" not in dps:
+                return
+
+            is_on = dps.get("1", False)
+            hk_mode = TUYA_TO_HK.get(dps.get("4"), HKState.HEAT) if is_on else HKState.OFF
             self._update(self.target_state, hk_mode)
             self._update(self.current_state, HKState.HEAT if hk_mode != HKState.OFF else HKState.OFF)
 
@@ -129,9 +136,12 @@ class TuyaThermostat(Accessory):
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    driver = AccessoryDriver(port=51826, persist_file="thermostat.state", pincode=PAIRING_CODE)
-    driver.add_accessory(accessory=TuyaThermostat(driver, "Tuya Thermostat"))
+    log_level = os.getenv("TUYA_LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
+    driver = AccessoryDriver(port=51826, persist_file="thermostat.state", pincode=PAIRING_CODE, address=BIND_IP)
+    thermostat = TuyaThermostat(driver, "Tuya Thermostat")
+    thermostat.poll_status()
+    driver.add_accessory(accessory=thermostat)
     signal.signal(signal.SIGTERM, driver.signal_handler)
     log.info(f"Starting HomeKit bridge. Pair with code: {PAIRING_CODE.decode()}")
     driver.start()
