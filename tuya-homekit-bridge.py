@@ -81,6 +81,10 @@ class TuyaThermostat(Accessory):
         serv.configure_char("TemperatureDisplayUnits", value=0)
 
     def set_target_temp(self, value):
+        if self.target_state.get_value() == HKState.AUTO:
+            log.info(f"Ignoring temp change in AUTO mode")
+            self.target_temp.set_value(self.target_temp.get_value())
+            return
         log.info(f"Setting target temp: {value}C")
         try:
             self.device.set_value(DP.TARGET_TEMP.value, round(value * TEMP_DIVISOR))
