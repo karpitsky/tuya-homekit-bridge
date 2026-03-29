@@ -117,17 +117,17 @@ class TuyaThermostat(Accessory):
             dps = data["dps"]
             log.debug(f"DPS: {dps}")
 
-            if "3" in dps:
-                self._update(self.current_temp, float(dps["3"]) / TEMP_DIVISOR)
+            if DP.CURRENT_TEMP in dps:
+                self._update(self.current_temp, float(dps[DP.CURRENT_TEMP]) / TEMP_DIVISOR)
 
-            if "2" in dps:
-                self._update(self.target_temp, float(dps["2"]) / TEMP_DIVISOR)
+            if DP.TARGET_TEMP in dps:
+                self._update(self.target_temp, float(dps[DP.TARGET_TEMP]) / TEMP_DIVISOR)
 
-            if "1" not in dps:
+            if DP.SWITCH not in dps:
                 return
 
-            is_on = dps.get("1", False)
-            hk_mode = TUYA_TO_HK.get(dps.get("4"), HKState.HEAT) if is_on else HKState.OFF
+            is_on = dps.get(DP.SWITCH, False)
+            hk_mode = TUYA_TO_HK.get(dps.get(DP.MODE), HKState.HEAT) if is_on else HKState.OFF
             self._update(self.target_state, hk_mode)
             self._update(self.current_state, HKState.HEAT if hk_mode != HKState.OFF else HKState.OFF)
 
