@@ -82,10 +82,10 @@ class TuyaThermostat(Accessory):
 
     def set_target_temp(self, value):
         if self.target_state.get_value() == HKState.AUTO:
-            log.info(f"Ignoring temp change in AUTO mode")
-            self.target_temp.set_value(self.target_temp.get_value())
+            log.info("Ignoring temp change in AUTO mode")
+            self._update(self.target_temp, self.target_temp.get_value())
             return
-        log.info(f"Setting target temp: {value}C")
+        log.info("Setting target temp: %s°C", value)
         try:
             self.device.set_value(DP.TARGET_TEMP.value, round(value * TEMP_DIVISOR))
         except Exception as e:
@@ -94,12 +94,9 @@ class TuyaThermostat(Accessory):
     def set_target_state(self, value):
         log.info(f"Setting state: {value}")
         try:
-            if value == HKState.OFF:
-                self.device.set_value(DP.SWITCH.value, False)
-            else:
-                self.device.set_value(DP.SWITCH.value, True)
-                if value in HK_TO_TUYA:
-                    self.device.set_value(DP.MODE.value, HK_TO_TUYA[value].value)
+            self.device.set_value(DP.SWITCH.value, value != HKState.OFF)
+            if value != HKState.OFF and value in HK_TO_TUYA:
+                self.device.set_value(DP.MODE.value, HK_TO_TUYA[value].value)
         except Exception as e:
             log.error(f"Failed to set state: {e}")
 
@@ -126,7 +123,7 @@ class TuyaThermostat(Accessory):
             if DP.SWITCH not in dps:
                 return
 
-            is_on = dps.get(DP.SWITCH, False)
+            is_on = dps[DP.SWITCH]
             hk_mode = TUYA_TO_HK.get(dps.get(DP.MODE), HKState.HEAT) if is_on else HKState.OFF
             self._update(self.target_state, hk_mode)
             self._update(self.current_state, HKState.HEAT if hk_mode != HKState.OFF else HKState.OFF)
